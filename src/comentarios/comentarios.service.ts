@@ -12,7 +12,7 @@ import { CreateComentarioDto } from './dto/create-comentario.dto';
 
 export type ComentarioResponse = {
   id: string;
-  inmuebleId: string;
+  inmuebleId: number;
   userId: string;
   nombreUsuario: string;
   texto: string;
@@ -30,7 +30,7 @@ export class ComentariosService {
     private readonly users: Repository<User>,
   ) {}
 
-  async listByInmueble(inmuebleId: string): Promise<ComentarioResponse[]> {
+  async listByInmueble(inmuebleId: number): Promise<ComentarioResponse[]> {
     const exists = await this.inmuebles.exist({ where: { id: inmuebleId } });
     if (!exists) throw new NotFoundException('Inmueble no encontrado');
     const rows = await this.comentarios.find({
@@ -49,7 +49,7 @@ export class ComentariosService {
   }
 
   async create(
-    inmuebleId: string,
+    inmuebleId: number,
     userId: string,
     dto: CreateComentarioDto,
   ): Promise<ComentarioResponse> {

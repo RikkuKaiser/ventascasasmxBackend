@@ -18,8 +18,8 @@ export class Favorito {
   @Column({ name: 'user_id' })
   userId: string;
 
-  @Column({ name: 'inmueble_id' })
-  inmuebleId: string;
+  @Column({ name: 'inmueble_id', type: 'int' })
+  inmuebleId: number;
 
   @ManyToOne(() => User, (u) => u.favoritos, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })

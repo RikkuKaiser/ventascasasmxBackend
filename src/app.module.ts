@@ -8,10 +8,12 @@ import { DatabaseModule } from './database/database.module';
 import { FavoritosModule } from './favoritos/favoritos.module';
 import { InmueblesModule } from './inmuebles/inmuebles.module';
 import { SolicitudesAsesorModule } from './solicitudes-asesor/solicitudes-asesor.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    StorageModule,
     DatabaseModule,
     AuthModule,
     InmueblesModule,

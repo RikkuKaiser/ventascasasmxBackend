@@ -4,8 +4,8 @@ import { Favorito } from './favorito.entity';
 
 @Entity('inmuebles')
 export class Inmueble {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+  @PrimaryGeneratedColumn()
+  id: number;
 
   @Column()
   titulo: string;
@@ -69,6 +69,10 @@ export class Inmueble {
 
   @Column({ name: 'cuota_mantenimiento', type: 'double precision', default: 0 })
   cuotaMantenimiento: number;
+
+  /** JSON: ubicación extendida, servicios, frente/fondo, etc. (terreno campestre). */
+  @Column('jsonb', { name: 'terreno_campestre', nullable: true })
+  terrenoCampestre: Record<string, unknown> | null;
 
   @OneToMany(() => Comentario, (c) => c.inmueble)
   comentarios: Comentario[];

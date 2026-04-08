@@ -18,12 +18,12 @@ export class FavoritosService {
       where: { userId },
       select: ['inmuebleId'],
     });
-    return rows.map((r) => r.inmuebleId);
+    return rows.map((r) => String(r.inmuebleId));
   }
 
   async toggle(
     userId: string,
-    inmuebleId: string,
+    inmuebleId: number,
   ): Promise<{ ids: string[]; esFavorito: boolean }> {
     const existsInm = await this.inmuebles.exist({ where: { id: inmuebleId } });
     if (!existsInm) throw new NotFoundException('Inmueble no encontrado');

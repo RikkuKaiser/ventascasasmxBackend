@@ -1,15 +1,24 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Param,
-  ParseUUIDPipe,
+  ParseIntPipe,
   Post,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { CreateInmuebleDto } from './dto/create-inmueble.dto';
 import { InmueblesService } from './inmuebles.service';
+
+const upload = memoryStorage();
 
 @Controller('inmuebles')
 export class InmueblesController {
@@ -26,8 +35,56 @@ export class InmueblesController {
     return this.inmuebles.create(dto);
   }
 
+  /**
+   * multipart/form-data: campo `data` (JSON del CreateInmuebleDto), archivos opcionales
+   * `principal` (1) y `galeria` (varios). Requiere GCS configurado si envías archivos.
+   */
+  @Post('con-fotos')
+  @UseGuards(AuthGuard('jwt'))
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'principal', maxCount: 1 },
+        { name: 'galeria', maxCount: 24 },
+      ],
+      {
+        storage: upload,
+        limits: { fileSize: 12 * 1024 * 1024 },
+      },
+    ),
+  )
+  async createConFotos(
+    @Body('data') dataJson: string,
+    @UploadedFiles()
+    files: {
+      principal?: Express.Multer.File[];
+      galeria?: Express.Multer.File[];
+    },
+  ) {
+    if (!dataJson || typeof dataJson !== 'string') {
+      throw new BadRequestException(
+        'Envía el campo "data" con un JSON del inmueble (CreateInmuebleDto).',
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(dataJson) as unknown;
+    } catch {
+      throw new BadRequestException('El campo "data" no es JSON válido.');
+    }
+    const dto = plainToInstance(CreateInmuebleDto, parsed);
+    const errs = await validate(dto);
+    if (errs.length) {
+      throw new BadRequestException(errs);
+    }
+    return this.inmuebles.create(dto, {
+      principal: files?.principal?.[0],
+      galeria: files?.galeria,
+    });
+  }
+
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.inmuebles.findOne(id);
   }
 }

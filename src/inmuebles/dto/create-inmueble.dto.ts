@@ -10,7 +10,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { TerrenoCampestreDto } from './terreno-campestre.dto';
 
 const TIPOS_VIVIENDA = [
   'casa',
@@ -81,10 +83,11 @@ export class CreateInmuebleDto {
   @IsString({ each: true })
   etiquetas?: string[];
 
+  /** URL externa; opcional si subes `principal` por multipart a /inmuebles/con-fotos */
+  @IsOptional()
   @IsString()
-  @MinLength(1)
   @MaxLength(2000)
-  imagen: string;
+  imagen?: string;
 
   @IsOptional()
   @IsArray()
@@ -128,4 +131,10 @@ export class CreateInmuebleDto {
   @IsNumber()
   @Min(0)
   cuotaMantenimiento?: number;
+
+  /** Datos extra para terreno campestre (u otro terreno con ficha extendida). */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TerrenoCampestreDto)
+  terrenoCampestre?: TerrenoCampestreDto;
 }

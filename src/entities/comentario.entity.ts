@@ -14,8 +14,8 @@ export class Comentario {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'inmueble_id' })
-  inmuebleId: string;
+  @Column({ name: 'inmueble_id', type: 'int' })
+  inmuebleId: number;
 
   @Column({ name: 'user_id' })
   userId: string;

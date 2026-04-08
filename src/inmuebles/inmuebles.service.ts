@@ -1,11 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Inmueble } from '../entities/inmueble.entity';
+import { instanceToPlain } from 'class-transformer';
 import { CreateInmuebleDto } from './dto/create-inmueble.dto';
+import { GcsService } from '../storage/gcs.service';
 
 export type InmuebleResponse = {
-  id: string;
+  id: number;
   titulo: string;
   descripcion: string;
   precio: number;
@@ -27,7 +33,19 @@ export type InmuebleResponse = {
   pisosEdificio?: number;
   amenidades: string[];
   cuotaMantenimiento: number;
+  terrenoCampestre?: Record<string, unknown>;
 };
+
+function extFromMime(mimetype: string): string {
+  const map: Record<string, string> = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+  };
+  return map[mimetype.toLowerCase()] ?? '.bin';
+}
 
 function toDto(i: Inmueble): InmuebleResponse {
   const base: InmuebleResponse = {
@@ -54,14 +72,22 @@ function toDto(i: Inmueble): InmuebleResponse {
   if (i.pisosVivienda != null) base.pisosVivienda = i.pisosVivienda;
   if (i.pisoDepartamento != null) base.pisoDepartamento = i.pisoDepartamento;
   if (i.pisosEdificio != null) base.pisosEdificio = i.pisosEdificio;
+  if (i.terrenoCampestre && typeof i.terrenoCampestre === 'object')
+    base.terrenoCampestre = i.terrenoCampestre as Record<string, unknown>;
   return base;
 }
+
+export type CreateInmuebleFiles = {
+  principal?: Express.Multer.File;
+  galeria?: Express.Multer.File[];
+};
 
 @Injectable()
 export class InmueblesService {
   constructor(
     @InjectRepository(Inmueble)
     private readonly repo: Repository<Inmueble>,
+    private readonly gcs: GcsService,
   ) {}
 
   async findAll(): Promise<InmuebleResponse[]> {
@@ -69,15 +95,36 @@ export class InmueblesService {
     return list.map(toDto);
   }
 
-  async findOne(id: string): Promise<InmuebleResponse> {
+  async findOne(id: number): Promise<InmuebleResponse> {
     const i = await this.repo.findOne({ where: { id } });
     if (!i) throw new NotFoundException('Inmueble no encontrado');
     return toDto(i);
   }
 
-  async create(dto: CreateInmuebleDto): Promise<InmuebleResponse> {
-    const galeria =
+  async create(
+    dto: CreateInmuebleDto,
+    files?: CreateInmuebleFiles,
+  ): Promise<InmuebleResponse> {
+    const principalFile = files?.principal;
+    const galeriaFiles = files?.galeria?.filter(Boolean) ?? [];
+    const hasUpload = !!(principalFile || galeriaFiles.length);
+
+    if (hasUpload && !this.gcs.isEnabled()) {
+      throw new BadRequestException(
+        'Subida de archivos no disponible: configura GCS_BUCKET y credenciales en el servidor.',
+      );
+    }
+
+    const imagenUrl = dto.imagen?.trim() ?? '';
+    if (!imagenUrl && !principalFile) {
+      throw new BadRequestException(
+        'Indica la URL de la imagen principal o sube un archivo principal.',
+      );
+    }
+
+    const galeriaFromDto =
       dto.galeria?.map((u) => u.trim()).filter(Boolean) ?? [];
+
     const row = this.repo.create({
       titulo: dto.titulo.trim(),
       descripcion: dto.descripcion.trim(),
@@ -91,8 +138,8 @@ export class InmueblesService {
       banos: dto.banos,
       destacado: dto.destacado ?? false,
       etiquetas: dto.etiquetas?.map((e) => e.trim()).filter(Boolean) ?? [],
-      imagen: dto.imagen.trim(),
-      galeria: galeria.length ? galeria : null,
+      imagen: imagenUrl || 'pending-upload',
+      galeria: galeriaFromDto.length ? galeriaFromDto : null,
       tipoVivienda: dto.tipoVivienda,
       estacionamientos: dto.estacionamientos,
       pisosVivienda: dto.pisosVivienda ?? null,
@@ -101,8 +148,40 @@ export class InmueblesService {
       amenidades:
         dto.amenidades?.map((a) => a.trim()).filter(Boolean) ?? [],
       cuotaMantenimiento: dto.cuotaMantenimiento ?? 0,
+      terrenoCampestre: dto.terrenoCampestre
+        ? (instanceToPlain(dto.terrenoCampestre) as Record<string, unknown>)
+        : null,
     });
-    const saved = await this.repo.save(row);
+
+    let saved = await this.repo.save(row);
+
+    if (principalFile) {
+      const ext = extFromMime(principalFile.mimetype);
+      const url = await this.gcs.uploadInmuebleObject(
+        saved.id,
+        `principal${ext}`,
+        principalFile.buffer,
+        principalFile.mimetype,
+      );
+      saved.imagen = url;
+    }
+
+    const galUrls = [...(saved.galeria ?? [])];
+    for (let i = 0; i < galeriaFiles.length; i++) {
+      const f = galeriaFiles[i];
+      const ext = extFromMime(f.mimetype);
+      const url = await this.gcs.uploadInmuebleObject(
+        saved.id,
+        `galeria/${i}${ext}`,
+        f.buffer,
+        f.mimetype,
+      );
+      galUrls.push(url);
+    }
+    if (galUrls.length) saved.galeria = galUrls;
+    else saved.galeria = null;
+
+    saved = await this.repo.save(saved);
     return toDto(saved);
   }
 }

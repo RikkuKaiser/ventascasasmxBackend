@@ -3,7 +3,7 @@ import {
   Controller,
   Get,
   Param,
-  ParseUUIDPipe,
+  ParseIntPipe,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -17,14 +17,14 @@ export class ComentariosController {
   constructor(private readonly comentarios: ComentariosService) {}
 
   @Get()
-  list(@Param('inmuebleId', ParseUUIDPipe) inmuebleId: string) {
+  list(@Param('inmuebleId', ParseIntPipe) inmuebleId: number) {
     return this.comentarios.listByInmueble(inmuebleId);
   }
 
   @Post()
   @UseGuards(AuthGuard('jwt'))
   create(
-    @Param('inmuebleId', ParseUUIDPipe) inmuebleId: string,
+    @Param('inmuebleId', ParseIntPipe) inmuebleId: number,
     @CurrentUser() user: JwtUser,
     @Body() dto: CreateComentarioDto,
   ) {

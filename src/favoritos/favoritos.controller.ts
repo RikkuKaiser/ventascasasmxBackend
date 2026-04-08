@@ -2,7 +2,7 @@ import {
   Controller,
   Get,
   Param,
-  ParseUUIDPipe,
+  ParseIntPipe,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -23,7 +23,7 @@ export class FavoritosController {
   @Post(':inmuebleId/toggle')
   toggle(
     @CurrentUser() user: JwtUser,
-    @Param('inmuebleId', ParseUUIDPipe) inmuebleId: string,
+    @Param('inmuebleId', ParseIntPipe) inmuebleId: number,
   ) {
     return this.favoritos.toggle(user.userId, inmuebleId);
   }
