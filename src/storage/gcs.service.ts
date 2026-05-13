@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Bucket, Storage } from '@google-cloud/storage';
+import { Storage, type Bucket } from '@google-cloud/storage';
 
 function resumenErrorGcs(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -74,6 +74,57 @@ export class GcsService {
   }
 
   /**
+   * Subida con JSON API (uploadType=media) + fetch, sin createWriteStream del SDK.
+   * Evita "Cannot call write after a stream was destroyed" en Node/Docker con @google-cloud/storage.
+   */
+  private async putBufferMediaUpload(
+    objectName: string,
+    buffer: Buffer,
+    contentType: string,
+  ): Promise<void> {
+    if (!this.storage) throw new Error('GCS no configurado');
+    type AuthLike = { getAccessToken: () => Promise<string | null | undefined> };
+    const token = await (this.storage.authClient as AuthLike).getAccessToken();
+    if (!token) throw new Error('No se obtuvo access token para GCS');
+
+    const url = new URL(
+      `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucketName)}/o`,
+    );
+    url.searchParams.set('uploadType', 'media');
+    url.searchParams.set('name', objectName);
+
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': contentType,
+      },
+      body: new Uint8Array(buffer),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(
+        `GCS JSON API upload ${res.status} ${res.statusText}: ${text.slice(0, 1000)}`,
+      );
+    }
+  }
+
+  private async setObjectCacheHeaders(
+    objectName: string,
+    contentType: string,
+    cacheControl: string,
+  ): Promise<void> {
+    const file = this.bucket().file(objectName);
+    try {
+      await file.setMetadata({ contentType, cacheControl });
+    } catch (err: unknown) {
+      this.log.warn(
+        `GCS setMetadata falló object="${objectName}" — ${resumenErrorGcs(err)}`,
+      );
+    }
+  }
+
+  /**
    * Sube bajo `{inmuebleId}/img/...` o `{inmuebleId}/videos/...` (carpetas lógicas en el bucket).
    */
   async uploadInmuebleMedia(
@@ -87,15 +138,15 @@ export class GcsService {
     const objectName = `${inmuebleId}/${section}/${safeRel}`;
     const file = this.bucket().file(objectName);
     try {
-      await file.save(buffer, {
+      await this.putBufferMediaUpload(objectName, buffer, contentType);
+      await this.setObjectCacheHeaders(
+        objectName,
         contentType,
-        resumable: false,
-        validation: false,
-        metadata: { cacheControl: 'public, max-age=31536000' },
-      });
+        'public, max-age=31536000',
+      );
     } catch (err: unknown) {
       this.log.error(
-        `GCS save falló bucket="${this.bucketName}" object="${objectName}" bytes=${buffer.length} contentType=${contentType} — ${resumenErrorGcs(err)}`,
+        `GCS upload falló bucket="${this.bucketName}" object="${objectName}" bytes=${buffer.length} contentType=${contentType} — ${resumenErrorGcs(err)}`,
       );
       throw err;
     }
@@ -121,15 +172,15 @@ export class GcsService {
     const objectName = `test-uploads/${Date.now()}-${base}`;
     const file = this.bucket().file(objectName);
     try {
-      await file.save(buffer, {
+      await this.putBufferMediaUpload(objectName, buffer, contentType);
+      await this.setObjectCacheHeaders(
+        objectName,
         contentType,
-        resumable: false,
-        validation: false,
-        metadata: { cacheControl: 'public, max-age=3600' },
-      });
+        'public, max-age=3600',
+      );
     } catch (err: unknown) {
       this.log.error(
-        `GCS save (test) bucket="${this.bucketName}" object="${objectName}" — ${resumenErrorGcs(err)}`,
+        `GCS upload (test) bucket="${this.bucketName}" object="${objectName}" — ${resumenErrorGcs(err)}`,
       );
       throw err;
     }
