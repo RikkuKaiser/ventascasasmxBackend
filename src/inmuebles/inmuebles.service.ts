@@ -170,7 +170,7 @@ export class InmueblesService {
 
     if (hasUpload && !this.gcs.isEnabled()) {
       throw new BadRequestException(
-        'Subida de archivos no disponible: en el API configura Google Cloud Storage (GCS_BUCKET y GCS_CREDENTIALS_JSON en una línea, o GOOGLE_APPLICATION_CREDENTIALS apuntando al JSON de la cuenta de servicio).',
+        'Subida de archivos no disponible: configura GCS_BUCKET y credenciales. En Railway/Docker usa GCS_CREDENTIALS_JSON (JSON del service account en una variable); GOOGLE_APPLICATION_CREDENTIALS solo sirve si la ruta al archivo existe en el servidor (p. ej. en tu PC).',
       );
     }
 

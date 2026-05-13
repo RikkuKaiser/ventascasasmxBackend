@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Storage, type Bucket } from '@google-cloud/storage';
@@ -50,8 +51,16 @@ export class GcsService {
         this.storage = null;
       }
     } else if (this.bucketName && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      this.storage = new Storage();
-      this.log.log(`GCS listo con GOOGLE_APPLICATION_CREDENTIALS.`);
+      const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS.trim();
+      if (!existsSync(credPath)) {
+        this.storage = null;
+        this.log.warn(
+          `GOOGLE_APPLICATION_CREDENTIALS="${credPath}" no existe en este entorno (típico en Docker/Railway: no subes la carpeta src/secrets). Usa la variable GCS_CREDENTIALS_JSON con el JSON del service account en una sola línea, o quita GOOGLE_APPLICATION_CREDENTIALS del despliegue si ya usas GCS_CREDENTIALS_JSON.`,
+        );
+      } else {
+        this.storage = new Storage();
+        this.log.log(`GCS listo con GOOGLE_APPLICATION_CREDENTIALS (${credPath}).`);
+      }
     } else {
       this.storage = null;
       if (this.bucketName && !this.storage) {
