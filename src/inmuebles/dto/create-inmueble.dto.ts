@@ -12,6 +12,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { PublicacionInmuebleDto } from './publicacion-inmueble.dto';
 import { TerrenoCampestreDto } from './terreno-campestre.dto';
 
 const TIPOS_VIVIENDA = [
@@ -137,4 +138,10 @@ export class CreateInmuebleDto {
   @ValidateNested()
   @Type(() => TerrenoCampestreDto)
   terrenoCampestre?: TerrenoCampestreDto;
+
+  /** Dirección ampliada, mapa, video (formulario inmuebles con construcción). */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PublicacionInmuebleDto)
+  publicacionInmueble?: PublicacionInmuebleDto;
 }

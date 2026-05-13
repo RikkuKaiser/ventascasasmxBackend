@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { ComentariosModule } from './comentarios/comentarios.module';
 import { DatabaseModule } from './database/database.module';
+import { DebugModule } from './debug/debug.module';
 import { FavoritosModule } from './favoritos/favoritos.module';
 import { InmueblesModule } from './inmuebles/inmuebles.module';
 import { SolicitudesAsesorModule } from './solicitudes-asesor/solicitudes-asesor.module';
@@ -20,6 +21,7 @@ import { StorageModule } from './storage/storage.module';
     ComentariosModule,
     FavoritosModule,
     SolicitudesAsesorModule,
+    DebugModule,
   ],
   controllers: [AppController],
   providers: [AppService],

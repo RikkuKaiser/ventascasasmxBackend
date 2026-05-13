@@ -1,14 +1,6 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  ParseIntPipe,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { Body, Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
 import { CurrentUser, type JwtUser } from '../common/decorators/current-user.decorator';
+import { Public } from '../common/decorators/public.decorator';
 import { ComentariosService } from './comentarios.service';
 import { CreateComentarioDto } from './dto/create-comentario.dto';
 
@@ -16,13 +8,13 @@ import { CreateComentarioDto } from './dto/create-comentario.dto';
 export class ComentariosController {
   constructor(private readonly comentarios: ComentariosService) {}
 
+  @Public()
   @Get()
   list(@Param('inmuebleId', ParseIntPipe) inmuebleId: number) {
     return this.comentarios.listByInmueble(inmuebleId);
   }
 
   @Post()
-  @UseGuards(AuthGuard('jwt'))
   create(
     @Param('inmuebleId', ParseIntPipe) inmuebleId: number,
     @CurrentUser() user: JwtUser,

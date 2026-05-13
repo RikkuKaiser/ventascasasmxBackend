@@ -1,17 +1,8 @@
-import {
-  Controller,
-  Get,
-  Param,
-  ParseIntPipe,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
 import { CurrentUser, type JwtUser } from '../common/decorators/current-user.decorator';
 import { FavoritosService } from './favoritos.service';
 
 @Controller('favoritos')
-@UseGuards(AuthGuard('jwt'))
 export class FavoritosController {
   constructor(private readonly favoritos: FavoritosService) {}
 

@@ -7,10 +7,9 @@ import {
   ParseIntPipe,
   Post,
   UploadedFiles,
-  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { Public } from '../common/decorators/public.decorator';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
@@ -24,32 +23,33 @@ const upload = memoryStorage();
 export class InmueblesController {
   constructor(private readonly inmuebles: InmueblesService) {}
 
+  @Public()
   @Get()
   findAll() {
     return this.inmuebles.findAll();
   }
 
   @Post()
-  @UseGuards(AuthGuard('jwt'))
   create(@Body() dto: CreateInmuebleDto) {
     return this.inmuebles.create(dto);
   }
 
   /**
    * multipart/form-data: campo `data` (JSON del CreateInmuebleDto), archivos opcionales
-   * `principal` (1) y `galeria` (varios). Requiere GCS configurado si envías archivos.
+   * `principal` (1), `galeria` (varios), `videos` (varios). En GCS: `{id}/img/...` y `{id}/videos/...`.
+   * Requiere GCS configurado si envías archivos.
    */
   @Post('con-fotos')
-  @UseGuards(AuthGuard('jwt'))
   @UseInterceptors(
     FileFieldsInterceptor(
       [
         { name: 'principal', maxCount: 1 },
         { name: 'galeria', maxCount: 24 },
+        { name: 'videos', maxCount: 8 },
       ],
       {
         storage: upload,
-        limits: { fileSize: 12 * 1024 * 1024 },
+        limits: { fileSize: 100 * 1024 * 1024 },
       },
     ),
   )
@@ -59,6 +59,7 @@ export class InmueblesController {
     files: {
       principal?: Express.Multer.File[];
       galeria?: Express.Multer.File[];
+      videos?: Express.Multer.File[];
     },
   ) {
     if (!dataJson || typeof dataJson !== 'string') {
@@ -80,9 +81,11 @@ export class InmueblesController {
     return this.inmuebles.create(dto, {
       principal: files?.principal?.[0],
       galeria: files?.galeria,
+      videos: files?.videos,
     });
   }
 
+  @Public()
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.inmuebles.findOne(id);

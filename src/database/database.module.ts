@@ -5,6 +5,7 @@ import {
   Comentario,
   Favorito,
   Inmueble,
+  InmuebleArchivo,
   SolicitudAsesor,
   User,
 } from '../entities';
@@ -31,7 +32,14 @@ function useSsl(config: ConfigService, databaseUrl?: string): boolean {
         const ssl = useSsl(config, databaseUrl);
         const common = {
           type: 'postgres' as const,
-          entities: [User, Inmueble, Comentario, Favorito, SolicitudAsesor],
+          entities: [
+            User,
+            Inmueble,
+            InmuebleArchivo,
+            Comentario,
+            Favorito,
+            SolicitudAsesor,
+          ],
           synchronize: config.get<string>('TYPEORM_SYNC', 'true') === 'true',
           logging: config.get<string>('TYPEORM_LOGGING', 'false') === 'true',
           ...(ssl
@@ -56,7 +64,7 @@ function useSsl(config: ConfigService, databaseUrl?: string): boolean {
         };
       },
     }),
-    TypeOrmModule.forFeature([Inmueble, User]),
+    TypeOrmModule.forFeature([Inmueble, InmuebleArchivo, User]),
   ],
   providers: [SeedService],
 })

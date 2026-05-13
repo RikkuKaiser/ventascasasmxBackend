@@ -54,16 +54,17 @@ export class GcsService {
   }
 
   /**
-   * Sube un archivo a `inmuebles/{inmuebleId}/{relativePath}` y devuelve URL pública.
+   * Sube bajo `{inmuebleId}/img/...` o `{inmuebleId}/videos/...` (carpetas lógicas en el bucket).
    */
-  async uploadInmuebleObject(
+  async uploadInmuebleMedia(
     inmuebleId: number,
+    section: 'img' | 'videos',
     relativePath: string,
     buffer: Buffer,
     contentType: string,
   ): Promise<string> {
-    const safeRel = relativePath.replace(/^\/+/, '');
-    const objectName = `inmuebles/${inmuebleId}/${safeRel}`;
+    const safeRel = relativePath.replace(/^\/+/, '').replace(/\.\./g, '');
+    const objectName = `${inmuebleId}/${section}/${safeRel}`;
     const file = this.bucket().file(objectName);
     await file.save(buffer, {
       contentType,
@@ -78,5 +79,63 @@ export class GcsService {
       );
     }
     return `${this.publicBase}/${objectName}`;
+  }
+
+  /**
+   * Sube un archivo bajo `test-uploads/` (pruebas de credenciales y bucket).
+   */
+  async uploadTestFile(
+    buffer: Buffer,
+    contentType: string,
+    originalName: string,
+  ): Promise<{ url: string; objectName: string }> {
+    const base = originalName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || 'archivo.bin';
+    const objectName = `test-uploads/${Date.now()}-${base}`;
+    const file = this.bucket().file(objectName);
+    await file.save(buffer, {
+      contentType,
+      resumable: false,
+      metadata: { cacheControl: 'public, max-age=3600' },
+    });
+    try {
+      await file.makePublic();
+    } catch {
+      this.log.warn(
+        `No se pudo makePublic en ${objectName}; revisa permisos del bucket.`,
+      );
+    }
+    return {
+      objectName,
+      url: `${this.publicBase}/${objectName}`,
+    };
+  }
+
+  objectPublicUrl(objectName: string): string {
+    const name = objectName.replace(/^\/+/, '');
+    return `${this.publicBase}/${name}`;
+  }
+
+  /**
+   * Lista objetos bajo un prefijo (carpeta lógica en GCS) y devuelve URLs con la base pública configurada.
+   */
+  async listObjectUrlsByPrefix(
+    prefix: string,
+    maxResults: number,
+  ): Promise<{ name: string; url: string; updated?: string }[]> {
+    let p = prefix.trim().replace(/^\/+/, '');
+    if (p && !p.endsWith('/')) p = `${p}/`;
+    const cap = Math.min(Math.max(1, maxResults), 500);
+    const [files] = await this.bucket().getFiles({
+      prefix: p || undefined,
+      maxResults: cap,
+      autoPaginate: false,
+    });
+    return files
+      .filter((f) => !f.name.endsWith('/'))
+      .map((f) => ({
+        name: f.name,
+        url: this.objectPublicUrl(f.name),
+        updated: f.metadata.updated,
+      }));
   }
 }

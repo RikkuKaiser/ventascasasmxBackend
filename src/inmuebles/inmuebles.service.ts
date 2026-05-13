@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Inmueble } from '../entities/inmueble.entity';
+import { InmuebleArchivo } from '../entities/inmueble-archivo.entity';
 import { instanceToPlain } from 'class-transformer';
 import { CreateInmuebleDto } from './dto/create-inmueble.dto';
 import { GcsService } from '../storage/gcs.service';
@@ -34,6 +35,14 @@ export type InmuebleResponse = {
   amenidades: string[];
   cuotaMantenimiento: number;
   terrenoCampestre?: Record<string, unknown>;
+  publicacionInmueble?: Record<string, unknown>;
+  archivos?: {
+    id: number;
+    tipo: string;
+    url: string;
+    objectPath: string | null;
+    sortOrder: number;
+  }[];
 };
 
 function extFromMime(mimetype: string): string {
@@ -45,6 +54,40 @@ function extFromMime(mimetype: string): string {
     'image/gif': '.gif',
   };
   return map[mimetype.toLowerCase()] ?? '.bin';
+}
+
+const videoMime = /^video\/(mp4|webm|quicktime|mpeg|x-msvideo)$/i;
+
+function extFromVideoMime(mimetype: string): string {
+  const map: Record<string, string> = {
+    'video/mp4': '.mp4',
+    'video/webm': '.webm',
+    'video/quicktime': '.mov',
+    'video/mpeg': '.mpeg',
+    'video/x-msvideo': '.avi',
+  };
+  return map[mimetype.toLowerCase()] ?? '.bin';
+}
+
+function sortArchivosParaRespuesta(
+  rows: InmuebleArchivo[],
+): NonNullable<InmuebleResponse['archivos']> {
+  const tipoRank = (t: string) =>
+    t === 'principal' ? 0 : t === 'galeria' ? 1 : 2;
+  return [...rows]
+    .sort(
+      (a, b) =>
+        tipoRank(a.tipo) - tipoRank(b.tipo)
+        || a.sortOrder - b.sortOrder
+        || a.id - b.id,
+    )
+    .map((a) => ({
+      id: a.id,
+      tipo: a.tipo,
+      url: a.url,
+      objectPath: a.objectPath,
+      sortOrder: a.sortOrder,
+    }));
 }
 
 function toDto(i: Inmueble): InmuebleResponse {
@@ -74,12 +117,17 @@ function toDto(i: Inmueble): InmuebleResponse {
   if (i.pisosEdificio != null) base.pisosEdificio = i.pisosEdificio;
   if (i.terrenoCampestre && typeof i.terrenoCampestre === 'object')
     base.terrenoCampestre = i.terrenoCampestre as Record<string, unknown>;
+  if (i.publicacionInmueble && typeof i.publicacionInmueble === 'object')
+    base.publicacionInmueble = i.publicacionInmueble as Record<string, unknown>;
+  if (i.archivos?.length)
+    base.archivos = sortArchivosParaRespuesta(i.archivos);
   return base;
 }
 
 export type CreateInmuebleFiles = {
   principal?: Express.Multer.File;
   galeria?: Express.Multer.File[];
+  videos?: Express.Multer.File[];
 };
 
 @Injectable()
@@ -87,6 +135,8 @@ export class InmueblesService {
   constructor(
     @InjectRepository(Inmueble)
     private readonly repo: Repository<Inmueble>,
+    @InjectRepository(InmuebleArchivo)
+    private readonly archivosRepo: Repository<InmuebleArchivo>,
     private readonly gcs: GcsService,
   ) {}
 
@@ -96,7 +146,10 @@ export class InmueblesService {
   }
 
   async findOne(id: number): Promise<InmuebleResponse> {
-    const i = await this.repo.findOne({ where: { id } });
+    const i = await this.repo.findOne({
+      where: { id },
+      relations: { archivos: true },
+    });
     if (!i) throw new NotFoundException('Inmueble no encontrado');
     return toDto(i);
   }
@@ -107,11 +160,12 @@ export class InmueblesService {
   ): Promise<InmuebleResponse> {
     const principalFile = files?.principal;
     const galeriaFiles = files?.galeria?.filter(Boolean) ?? [];
-    const hasUpload = !!(principalFile || galeriaFiles.length);
+    const videoFiles = files?.videos?.filter(Boolean) ?? [];
+    const hasUpload = !!(principalFile || galeriaFiles.length || videoFiles.length);
 
     if (hasUpload && !this.gcs.isEnabled()) {
       throw new BadRequestException(
-        'Subida de archivos no disponible: configura GCS_BUCKET y credenciales en el servidor.',
+        'Subida de archivos no disponible: en el API configura Google Cloud Storage (GCS_BUCKET y GCS_CREDENTIALS_JSON en una línea, o GOOGLE_APPLICATION_CREDENTIALS apuntando al JSON de la cuenta de servicio).',
       );
     }
 
@@ -151,37 +205,147 @@ export class InmueblesService {
       terrenoCampestre: dto.terrenoCampestre
         ? (instanceToPlain(dto.terrenoCampestre) as Record<string, unknown>)
         : null,
+      publicacionInmueble: dto.publicacionInmueble
+        ? (instanceToPlain(dto.publicacionInmueble) as Record<string, unknown>)
+        : null,
     });
 
     let saved = await this.repo.save(row);
 
+    const archivosRows: InmuebleArchivo[] = [];
+    let galeriaSort = 1;
+
     if (principalFile) {
       const ext = extFromMime(principalFile.mimetype);
-      const url = await this.gcs.uploadInmuebleObject(
+      const objectPath = `${saved.id}/img/principal${ext}`;
+      const url = await this.gcs.uploadInmuebleMedia(
         saved.id,
+        'img',
         `principal${ext}`,
         principalFile.buffer,
         principalFile.mimetype,
       );
       saved.imagen = url;
+      archivosRows.push(
+        this.archivosRepo.create({
+          inmuebleId: saved.id,
+          tipo: 'principal',
+          url,
+          objectPath,
+          sortOrder: 0,
+        }),
+      );
+    }
+    else {
+      archivosRows.push(
+        this.archivosRepo.create({
+          inmuebleId: saved.id,
+          tipo: 'principal',
+          url: imagenUrl,
+          objectPath: null,
+          sortOrder: 0,
+        }),
+      );
     }
 
-    const galUrls = [...(saved.galeria ?? [])];
+    for (const u of galeriaFromDto) {
+      archivosRows.push(
+        this.archivosRepo.create({
+          inmuebleId: saved.id,
+          tipo: 'galeria',
+          url: u,
+          objectPath: null,
+          sortOrder: galeriaSort++,
+        }),
+      );
+    }
+
+    const galUrls = [...galeriaFromDto];
     for (let i = 0; i < galeriaFiles.length; i++) {
       const f = galeriaFiles[i];
       const ext = extFromMime(f.mimetype);
-      const url = await this.gcs.uploadInmuebleObject(
+      const objectPath = `${saved.id}/img/galeria-${i}${ext}`;
+      const url = await this.gcs.uploadInmuebleMedia(
         saved.id,
-        `galeria/${i}${ext}`,
+        'img',
+        `galeria-${i}${ext}`,
         f.buffer,
         f.mimetype,
       );
       galUrls.push(url);
+      archivosRows.push(
+        this.archivosRepo.create({
+          inmuebleId: saved.id,
+          tipo: 'galeria',
+          url,
+          objectPath,
+          sortOrder: galeriaSort++,
+        }),
+      );
     }
     if (galUrls.length) saved.galeria = galUrls;
     else saved.galeria = null;
 
+    const uploadedVideoUrls: string[] = [];
+    let videoSort = 0;
+    for (let i = 0; i < videoFiles.length; i++) {
+      const f = videoFiles[i];
+      if (!videoMime.test(f.mimetype)) {
+        throw new BadRequestException(
+          `Video no permitido (${f.mimetype}). Usa MP4, WebM, MOV, MPEG o AVI.`,
+        );
+      }
+      const ext = extFromVideoMime(f.mimetype);
+      const objectPath = `${saved.id}/videos/archivo-${i}${ext}`;
+      const url = await this.gcs.uploadInmuebleMedia(
+        saved.id,
+        'videos',
+        `archivo-${i}${ext}`,
+        f.buffer,
+        f.mimetype,
+      );
+      uploadedVideoUrls.push(url);
+      archivosRows.push(
+        this.archivosRepo.create({
+          inmuebleId: saved.id,
+          tipo: 'video',
+          url,
+          objectPath,
+          sortOrder: videoSort++,
+        }),
+      );
+    }
+
+    if (uploadedVideoUrls.length) {
+      if (
+        saved.terrenoCampestre
+        && typeof saved.terrenoCampestre === 'object'
+      ) {
+        saved.terrenoCampestre = {
+          ...(saved.terrenoCampestre as Record<string, unknown>),
+          videos: uploadedVideoUrls,
+        } as typeof saved.terrenoCampestre;
+      } else if (
+        saved.publicacionInmueble
+        && typeof saved.publicacionInmueble === 'object'
+      ) {
+        saved.publicacionInmueble = {
+          ...(saved.publicacionInmueble as Record<string, unknown>),
+          videos: uploadedVideoUrls,
+        } as typeof saved.publicacionInmueble;
+      } else {
+        saved.publicacionInmueble = { videos: uploadedVideoUrls };
+      }
+    }
+
     saved = await this.repo.save(saved);
-    return toDto(saved);
+    if (archivosRows.length)
+      await this.archivosRepo.save(archivosRows);
+
+    const conArchivos = await this.repo.findOne({
+      where: { id: saved.id },
+      relations: { archivos: true },
+    });
+    return toDto(conArchivos ?? saved);
   }
 }

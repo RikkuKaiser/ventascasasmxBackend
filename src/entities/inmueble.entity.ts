@@ -1,6 +1,7 @@
 import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { Comentario } from './comentario.entity';
 import { Favorito } from './favorito.entity';
+import { InmuebleArchivo } from './inmueble-archivo.entity';
 
 @Entity('inmuebles')
 export class Inmueble {
@@ -74,9 +75,16 @@ export class Inmueble {
   @Column('jsonb', { name: 'terreno_campestre', nullable: true })
   terrenoCampestre: Record<string, unknown> | null;
 
+  /** JSON: calle, CP, mapa, video (publicar inmueble con construcción). */
+  @Column('jsonb', { name: 'publicacion_inmueble', nullable: true })
+  publicacionInmueble: Record<string, unknown> | null;
+
   @OneToMany(() => Comentario, (c) => c.inmueble)
   comentarios: Comentario[];
 
   @OneToMany(() => Favorito, (f) => f.inmueble)
   favoritos: Favorito[];
+
+  @OneToMany(() => InmuebleArchivo, (a) => a.inmueble)
+  archivos: InmuebleArchivo[];
 }
