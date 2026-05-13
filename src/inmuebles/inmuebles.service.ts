@@ -1,6 +1,9 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
+  InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -132,6 +135,8 @@ export type CreateInmuebleFiles = {
 
 @Injectable()
 export class InmueblesService {
+  private readonly log = new Logger(InmueblesService.name);
+
   constructor(
     @InjectRepository(Inmueble)
     private readonly repo: Repository<Inmueble>,
@@ -212,9 +217,16 @@ export class InmueblesService {
 
     let saved = await this.repo.save(row);
 
+    if (hasUpload) {
+      this.log.log(
+        `con-fotos: fila creada id=${saved.id} tipoVivienda=${dto.tipoVivienda} principal=${principalFile ? `${principalFile.size}b ${principalFile.mimetype}` : 'url'} galeriaArchivos=${galeriaFiles.length} videos=${videoFiles.length}`,
+      );
+    }
+
     const archivosRows: InmuebleArchivo[] = [];
     let galeriaSort = 1;
 
+    try {
     if (principalFile) {
       const ext = extFromMime(principalFile.mimetype);
       const objectPath = `${saved.id}/img/principal${ext}`;
@@ -347,5 +359,22 @@ export class InmueblesService {
       relations: { archivos: true },
     });
     return toDto(conArchivos ?? saved);
+    } catch (err: unknown) {
+      const detail
+        = err instanceof Error ? err.message : JSON.stringify(err).slice(0, 300);
+      this.log.error(
+        `create con archivos falló inmuebleId=${saved.id} tipo=${dto.tipoVivienda}: ${detail}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      if (err instanceof HttpException) throw err;
+      const exposeDetail =
+        process.env.NODE_ENV !== 'production'
+        || process.env.DEBUG_UPLOAD_ERRORS === 'true';
+      throw new InternalServerErrorException(
+        exposeDetail
+          ? `Error al subir archivos: ${detail}`
+          : 'Error al subir archivos. Revisa logs del API y la configuración de GCS. Activa DEBUG_UPLOAD_ERRORS=true para ver detalle en la respuesta.',
+      );
+    }
   }
 }

@@ -3,6 +3,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpException,
+  Logger,
   Param,
   ParseIntPipe,
   Post,
@@ -21,6 +23,8 @@ const upload = memoryStorage();
 
 @Controller('inmuebles')
 export class InmueblesController {
+  private readonly log = new Logger(InmueblesController.name);
+
   constructor(private readonly inmuebles: InmueblesService) {}
 
   @Public()
@@ -78,11 +82,24 @@ export class InmueblesController {
     if (errs.length) {
       throw new BadRequestException(errs);
     }
-    return this.inmuebles.create(dto, {
-      principal: files?.principal?.[0],
-      galeria: files?.galeria,
-      videos: files?.videos,
-    });
+    const principal = files?.principal?.[0];
+    const nGal = files?.galeria?.length ?? 0;
+    const nVid = files?.videos?.length ?? 0;
+    this.log.log(
+      `POST con-fotos tipoVivienda=${dto.tipoVivienda} principal=${principal ? `${principal.size}b` : 'no'} galeria=${nGal} videos=${nVid}`,
+    );
+    try {
+      return await this.inmuebles.create(dto, {
+        principal,
+        galeria: files?.galeria,
+        videos: files?.videos,
+      });
+    } catch (e: unknown) {
+      if (e instanceof HttpException) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      this.log.error(`POST con-fotos error no-HTTP: ${msg}`, e instanceof Error ? e.stack : undefined);
+      throw e;
+    }
   }
 
   @Public()

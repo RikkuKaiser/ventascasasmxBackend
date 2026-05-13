@@ -2,6 +2,26 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Bucket, Storage } from '@google-cloud/storage';
 
+function resumenErrorGcs(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  const o = err as {
+    message?: string
+    code?: number | string
+    errors?: { message?: string }[]
+  };
+  const bits = [
+    o.code != null ? String(o.code) : '',
+    o.message,
+    o.errors?.map((e) => e.message).filter(Boolean).join('; '),
+  ].filter(Boolean);
+  if (bits.length) return bits.join(' — ');
+  try {
+    return JSON.stringify(err).slice(0, 400);
+  } catch {
+    return String(err);
+  }
+}
+
 @Injectable()
 export class GcsService {
   private readonly log = new Logger(GcsService.name);
@@ -66,11 +86,19 @@ export class GcsService {
     const safeRel = relativePath.replace(/^\/+/, '').replace(/\.\./g, '');
     const objectName = `${inmuebleId}/${section}/${safeRel}`;
     const file = this.bucket().file(objectName);
-    await file.save(buffer, {
-      contentType,
-      resumable: false,
-      metadata: { cacheControl: 'public, max-age=31536000' },
-    });
+    try {
+      await file.save(buffer, {
+        contentType,
+        resumable: false,
+        validation: false,
+        metadata: { cacheControl: 'public, max-age=31536000' },
+      });
+    } catch (err: unknown) {
+      this.log.error(
+        `GCS save falló bucket="${this.bucketName}" object="${objectName}" bytes=${buffer.length} contentType=${contentType} — ${resumenErrorGcs(err)}`,
+      );
+      throw err;
+    }
     try {
       await file.makePublic();
     } catch {
@@ -92,11 +120,19 @@ export class GcsService {
     const base = originalName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || 'archivo.bin';
     const objectName = `test-uploads/${Date.now()}-${base}`;
     const file = this.bucket().file(objectName);
-    await file.save(buffer, {
-      contentType,
-      resumable: false,
-      metadata: { cacheControl: 'public, max-age=3600' },
-    });
+    try {
+      await file.save(buffer, {
+        contentType,
+        resumable: false,
+        validation: false,
+        metadata: { cacheControl: 'public, max-age=3600' },
+      });
+    } catch (err: unknown) {
+      this.log.error(
+        `GCS save (test) bucket="${this.bucketName}" object="${objectName}" — ${resumenErrorGcs(err)}`,
+      );
+      throw err;
+    }
     try {
       await file.makePublic();
     } catch {
