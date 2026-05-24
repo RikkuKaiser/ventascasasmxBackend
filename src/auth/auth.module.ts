@@ -8,6 +8,7 @@ import { User } from '../entities/user.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { PublisherGuard } from './guards/publisher.guard';
 import { JwtStrategy } from './jwt.strategy';
 
 @Module({
@@ -28,8 +29,9 @@ import { JwtStrategy } from './jwt.strategy';
     AuthService,
     JwtStrategy,
     JwtAuthGuard,
+    PublisherGuard,
     { provide: APP_GUARD, useExisting: JwtAuthGuard },
   ],
-  exports: [AuthService, JwtModule, PassportModule, JwtStrategy, JwtAuthGuard],
+  exports: [AuthService, JwtModule, PassportModule, JwtStrategy, JwtAuthGuard, PublisherGuard],
 })
 export class AuthModule {}

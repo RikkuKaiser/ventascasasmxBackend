@@ -9,9 +9,11 @@ import {
   ParseIntPipe,
   Post,
   UploadedFiles,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { Public } from '../common/decorators/public.decorator';
+import { PublisherGuard } from '../auth/guards/publisher.guard';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
@@ -33,6 +35,7 @@ export class InmueblesController {
     return this.inmuebles.findAll();
   }
 
+  @UseGuards(PublisherGuard)
   @Post()
   create(@Body() dto: CreateInmuebleDto) {
     return this.inmuebles.create(dto);
@@ -43,6 +46,7 @@ export class InmueblesController {
    * `principal` (1), `galeria` (varios), `videos` (varios). En GCS: `{id}/img/...` y `{id}/videos/...`.
    * Requiere GCS configurado si envías archivos.
    */
+  @UseGuards(PublisherGuard)
   @Post('con-fotos')
   @UseInterceptors(
     FileFieldsInterceptor(
