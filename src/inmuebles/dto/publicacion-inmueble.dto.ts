@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -8,6 +9,10 @@ import {
 
 /** Datos extra del formulario de casas/deptos (no terreno). */
 export class PublicacionInmuebleDto {
+  @IsOptional()
+  @IsIn(['venta', 'renta'])
+  operacion?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(500)

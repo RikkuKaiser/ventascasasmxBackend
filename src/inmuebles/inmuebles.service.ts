@@ -13,6 +13,12 @@ import { InmuebleArchivo } from '../entities/inmueble-archivo.entity';
 import { instanceToPlain } from 'class-transformer';
 import { CreateInmuebleDto } from './dto/create-inmueble.dto';
 import { GcsService } from '../storage/gcs.service';
+import {
+  normalizeOperacion,
+  operacionFromJson,
+  type OperacionInmueble,
+  withOperacionJson,
+} from './operacion-inmueble';
 
 export type InmuebleResponse = {
   id: number;
@@ -37,6 +43,7 @@ export type InmuebleResponse = {
   pisosEdificio?: number;
   amenidades: string[];
   cuotaMantenimiento: number;
+  operacion: OperacionInmueble;
   terrenoCampestre?: Record<string, unknown>;
   publicacionInmueble?: Record<string, unknown>;
   archivos?: {
@@ -94,6 +101,9 @@ function sortArchivosParaRespuesta(
 }
 
 function toDto(i: Inmueble): InmuebleResponse {
+  const operacion = normalizeOperacion(
+    i.operacion ?? operacionFromJson(i.terrenoCampestre, i.publicacionInmueble),
+  );
   const base: InmuebleResponse = {
     id: i.id,
     titulo: i.titulo,
@@ -113,15 +123,22 @@ function toDto(i: Inmueble): InmuebleResponse {
     estacionamientos: i.estacionamientos,
     amenidades: i.amenidades ?? [],
     cuotaMantenimiento: i.cuotaMantenimiento,
+    operacion,
   };
   if (i.galeria?.length) base.galeria = i.galeria;
   if (i.pisosVivienda != null) base.pisosVivienda = i.pisosVivienda;
   if (i.pisoDepartamento != null) base.pisoDepartamento = i.pisoDepartamento;
   if (i.pisosEdificio != null) base.pisosEdificio = i.pisosEdificio;
   if (i.terrenoCampestre && typeof i.terrenoCampestre === 'object')
-    base.terrenoCampestre = i.terrenoCampestre as Record<string, unknown>;
+    base.terrenoCampestre = withOperacionJson(
+      i.terrenoCampestre as Record<string, unknown>,
+      operacion,
+    ) ?? undefined;
   if (i.publicacionInmueble && typeof i.publicacionInmueble === 'object')
-    base.publicacionInmueble = i.publicacionInmueble as Record<string, unknown>;
+    base.publicacionInmueble = withOperacionJson(
+      i.publicacionInmueble as Record<string, unknown>,
+      operacion,
+    ) ?? undefined;
   if (i.archivos?.length)
     base.archivos = sortArchivosParaRespuesta(i.archivos);
   return base;
@@ -184,6 +201,24 @@ export class InmueblesService {
     const galeriaFromDto =
       dto.galeria?.map((u) => u.trim()).filter(Boolean) ?? [];
 
+    const terrenoPlain = dto.terrenoCampestre
+      ? (instanceToPlain(dto.terrenoCampestre) as Record<string, unknown>)
+      : null;
+    const publicacionPlain = dto.publicacionInmueble
+      ? (instanceToPlain(dto.publicacionInmueble) as Record<string, unknown>)
+      : null;
+    const operacion = normalizeOperacion(
+      dto.operacion
+        ?? (typeof terrenoPlain?.operacion === 'string'
+          ? terrenoPlain.operacion
+          : undefined)
+        ?? (typeof publicacionPlain?.operacion === 'string'
+          ? publicacionPlain.operacion
+          : undefined),
+    );
+    const terrenoCampestre = withOperacionJson(terrenoPlain, operacion);
+    const publicacionInmueble = withOperacionJson(publicacionPlain, operacion);
+
     const row = this.repo.create({
       titulo: dto.titulo.trim(),
       descripcion: dto.descripcion.trim(),
@@ -207,12 +242,9 @@ export class InmueblesService {
       amenidades:
         dto.amenidades?.map((a) => a.trim()).filter(Boolean) ?? [],
       cuotaMantenimiento: dto.cuotaMantenimiento ?? 0,
-      terrenoCampestre: dto.terrenoCampestre
-        ? (instanceToPlain(dto.terrenoCampestre) as Record<string, unknown>)
-        : null,
-      publicacionInmueble: dto.publicacionInmueble
-        ? (instanceToPlain(dto.publicacionInmueble) as Record<string, unknown>)
-        : null,
+      operacion,
+      terrenoCampestre,
+      publicacionInmueble,
     });
 
     let saved = await this.repo.save(row);

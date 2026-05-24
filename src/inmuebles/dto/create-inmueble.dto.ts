@@ -133,6 +133,10 @@ export class CreateInmuebleDto {
   @Min(0)
   cuotaMantenimiento?: number;
 
+  @IsOptional()
+  @IsIn(['venta', 'renta'])
+  operacion?: string;
+
   /** Datos extra para terreno campestre (u otro terreno con ficha extendida). */
   @IsOptional()
   @ValidateNested()

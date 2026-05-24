@@ -71,6 +71,10 @@ export class Inmueble {
   @Column({ name: 'cuota_mantenimiento', type: 'double precision', default: 0 })
   cuotaMantenimiento: number;
 
+  /** venta | renta. Null histórico → venta al leer. */
+  @Column({ length: 16, default: 'venta' })
+  operacion: string;
+
   /** JSON: ubicación extendida, servicios, frente/fondo, etc. (terreno campestre). */
   @Column('jsonb', { name: 'terreno_campestre', nullable: true })
   terrenoCampestre: Record<string, unknown> | null;
