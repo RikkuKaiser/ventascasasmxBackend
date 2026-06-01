@@ -1,10 +1,12 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsIn,
   IsNumber,
   IsOptional,
   IsString,
   MaxLength,
+  Min,
 } from 'class-validator';
 
 /** Datos extra del formulario de casas/deptos (no terreno). */
@@ -57,4 +59,29 @@ export class PublicacionInmuebleDto {
   @IsString()
   @MaxLength(8000)
   notas?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  condominio?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  mediosBanos?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  tipoCocina?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  complementos?: string[];
+
+  @IsOptional()
+  @IsIn(['nueva', 'usada', 'remodelada'])
+  estadoVivienda?: string;
 }
