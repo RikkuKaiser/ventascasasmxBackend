@@ -79,6 +79,30 @@ function extFromVideoMime(mimetype: string): string {
   return map[mimetype.toLowerCase()] ?? '.bin';
 }
 
+function videoUrlsFrom(
+  json: Record<string, unknown> | null | undefined,
+): string[] {
+  const v = json?.videos;
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (x): x is string => typeof x === 'string' && x.trim().length > 0,
+  );
+}
+
+function mergeVideoUrls(
+  json: Record<string, unknown> | null,
+  extra: string[],
+): Record<string, unknown> | null {
+  const all = [
+    ...new Set([
+      ...videoUrlsFrom(json),
+      ...extra.map((u) => u.trim()).filter(Boolean),
+    ]),
+  ];
+  if (!all.length) return json;
+  return { ...(json ?? {}), videos: all };
+}
+
 function sortArchivosParaRespuesta(
   rows: InmuebleArchivo[],
 ): NonNullable<InmuebleResponse['archivos']> {
@@ -396,6 +420,269 @@ export class InmueblesService {
         = err instanceof Error ? err.message : JSON.stringify(err).slice(0, 300);
       this.log.error(
         `create con archivos falló inmuebleId=${saved.id} tipo=${dto.tipoVivienda}: ${detail}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      if (err instanceof HttpException) throw err;
+      const exposeDetail =
+        process.env.NODE_ENV !== 'production'
+        || process.env.DEBUG_UPLOAD_ERRORS === 'true';
+      throw new InternalServerErrorException(
+        exposeDetail
+          ? `Error al subir archivos: ${detail}`
+          : 'Error al subir archivos. Revisa logs del API y la configuración de GCS. Activa DEBUG_UPLOAD_ERRORS=true para ver detalle en la respuesta.',
+      );
+    }
+  }
+
+  async update(
+    id: number,
+    dto: CreateInmuebleDto,
+    files?: CreateInmuebleFiles,
+  ): Promise<InmuebleResponse> {
+    const existing = await this.repo.findOne({
+      where: { id },
+      relations: { archivos: true },
+    });
+    if (!existing) throw new NotFoundException('Inmueble no encontrado');
+
+    const principalFile = files?.principal;
+    const galeriaFiles = files?.galeria?.filter(Boolean) ?? [];
+    const videoFiles = files?.videos?.filter(Boolean) ?? [];
+    const hasUpload = !!(
+      principalFile || galeriaFiles.length || videoFiles.length
+    );
+
+    if (hasUpload && !this.gcs.isEnabled()) {
+      throw new BadRequestException(
+        'Subida de archivos no disponible: configura GCS_BUCKET y credenciales. En Railway/Docker usa GCS_CREDENTIALS_JSON (JSON del service account en una variable); GOOGLE_APPLICATION_CREDENTIALS solo sirve si la ruta al archivo existe en el servidor (p. ej. en tu PC).',
+      );
+    }
+
+    const imagenUrl = dto.imagen?.trim() ?? '';
+    const imagenAnterior = existing.imagen;
+    const prevVideos = [
+      ...new Set([
+        ...videoUrlsFrom(existing.terrenoCampestre),
+        ...videoUrlsFrom(existing.publicacionInmueble),
+      ]),
+    ];
+
+    const terrenoPlain = dto.terrenoCampestre
+      ? (instanceToPlain(dto.terrenoCampestre) as Record<string, unknown>)
+      : null;
+    const publicacionPlain = dto.publicacionInmueble
+      ? (instanceToPlain(dto.publicacionInmueble) as Record<string, unknown>)
+      : null;
+    const operacion = normalizeOperacion(
+      dto.operacion
+        ?? (typeof terrenoPlain?.operacion === 'string'
+          ? terrenoPlain.operacion
+          : undefined)
+        ?? (typeof publicacionPlain?.operacion === 'string'
+          ? publicacionPlain.operacion
+          : undefined),
+    );
+
+    const galeriaActual = [...(existing.galeria ?? [])];
+    const galeriaNuevasUrls =
+      dto.galeria?.map((u) => u.trim()).filter(Boolean) ?? [];
+    for (const u of galeriaNuevasUrls) {
+      if (!galeriaActual.includes(u)) galeriaActual.push(u);
+    }
+
+    existing.titulo = dto.titulo.trim();
+    existing.descripcion = dto.descripcion.trim();
+    existing.precio = dto.precio;
+    existing.moneda = (dto.moneda ?? 'MXN').trim().toUpperCase().slice(0, 8);
+    existing.ciudad = dto.ciudad.trim();
+    existing.zona = dto.zona.trim();
+    existing.m2Superficie = dto.m2Superficie;
+    existing.m2Construccion = dto.m2Construccion;
+    existing.habitaciones = dto.habitaciones;
+    existing.banos = dto.banos;
+    existing.destacado = dto.destacado ?? false;
+    existing.etiquetas =
+      dto.etiquetas?.map((e) => e.trim()).filter(Boolean) ?? [];
+    if (imagenUrl && !principalFile) existing.imagen = imagenUrl;
+    existing.galeria = galeriaActual.length ? galeriaActual : null;
+    existing.tipoVivienda = dto.tipoVivienda;
+    existing.estacionamientos = dto.estacionamientos;
+    existing.pisosVivienda = dto.pisosVivienda ?? null;
+    existing.pisoDepartamento = dto.pisoDepartamento ?? null;
+    existing.pisosEdificio = dto.pisosEdificio ?? null;
+    existing.amenidades =
+      dto.amenidades?.map((a) => a.trim()).filter(Boolean) ?? [];
+    existing.cuotaMantenimiento = dto.cuotaMantenimiento ?? 0;
+    existing.operacion = operacion;
+    existing.terrenoCampestre = mergeVideoUrls(
+      withOperacionJson(terrenoPlain, operacion),
+      dto.terrenoCampestre ? prevVideos : [],
+    );
+    existing.publicacionInmueble = mergeVideoUrls(
+      withOperacionJson(publicacionPlain, operacion),
+      dto.publicacionInmueble ? prevVideos : [],
+    );
+    if (!existing.terrenoCampestre && !existing.publicacionInmueble && prevVideos.length) {
+      existing.publicacionInmueble = { videos: prevVideos, operacion };
+    }
+
+    let saved = await this.repo.save(existing);
+    const archivosRows: InmuebleArchivo[] = [];
+    const urlsConocidas = new Set(
+      (existing.archivos ?? []).map((a) => a.url),
+    );
+    let galeriaSort =
+      (existing.archivos ?? [])
+        .filter((a) => a.tipo === 'galeria')
+        .reduce((m, a) => Math.max(m, a.sortOrder), 0) + 1;
+
+    try {
+      if (principalFile) {
+        const ext = extFromMime(principalFile.mimetype);
+        const nombre = `principal-${Date.now()}${ext}`;
+        const url = await this.gcs.uploadInmuebleMedia(
+          saved.id,
+          'img',
+          nombre,
+          principalFile.buffer,
+          principalFile.mimetype,
+        );
+        saved.imagen = url;
+        await this.archivosRepo.delete({
+          inmuebleId: saved.id,
+          tipo: 'principal',
+        });
+        archivosRows.push(
+          this.archivosRepo.create({
+            inmuebleId: saved.id,
+            tipo: 'principal',
+            url,
+            objectPath: `${saved.id}/img/${nombre}`,
+            sortOrder: 0,
+          }),
+        );
+      } else if (imagenUrl && imagenUrl !== imagenAnterior) {
+        await this.archivosRepo.delete({
+          inmuebleId: saved.id,
+          tipo: 'principal',
+        });
+        archivosRows.push(
+          this.archivosRepo.create({
+            inmuebleId: saved.id,
+            tipo: 'principal',
+            url: imagenUrl,
+            objectPath: null,
+            sortOrder: 0,
+          }),
+        );
+      }
+
+      for (const u of galeriaNuevasUrls) {
+        if (urlsConocidas.has(u)) continue;
+        urlsConocidas.add(u);
+        archivosRows.push(
+          this.archivosRepo.create({
+            inmuebleId: saved.id,
+            tipo: 'galeria',
+            url: u,
+            objectPath: null,
+            sortOrder: galeriaSort++,
+          }),
+        );
+      }
+
+      for (let i = 0; i < galeriaFiles.length; i++) {
+        const f = galeriaFiles[i];
+        const ext = extFromMime(f.mimetype);
+        const nombre = `galeria-${Date.now()}-${i}${ext}`;
+        const url = await this.gcs.uploadInmuebleMedia(
+          saved.id,
+          'img',
+          nombre,
+          f.buffer,
+          f.mimetype,
+        );
+        if (!galeriaActual.includes(url)) galeriaActual.push(url);
+        archivosRows.push(
+          this.archivosRepo.create({
+            inmuebleId: saved.id,
+            tipo: 'galeria',
+            url,
+            objectPath: `${saved.id}/img/${nombre}`,
+            sortOrder: galeriaSort++,
+          }),
+        );
+      }
+      saved.galeria = galeriaActual.length ? galeriaActual : null;
+
+      const uploadedVideoUrls: string[] = [];
+      let videoSort =
+        (existing.archivos ?? [])
+          .filter((a) => a.tipo === 'video')
+          .reduce((m, a) => Math.max(m, a.sortOrder), 0) + 1;
+      for (let i = 0; i < videoFiles.length; i++) {
+        const f = videoFiles[i];
+        if (!videoMime.test(f.mimetype)) {
+          throw new BadRequestException(
+            `Video no permitido (${f.mimetype}). Usa MP4, WebM, MOV, MPEG o AVI.`,
+          );
+        }
+        const ext = extFromVideoMime(f.mimetype);
+        const nombre = `archivo-${Date.now()}-${i}${ext}`;
+        const url = await this.gcs.uploadInmuebleMedia(
+          saved.id,
+          'videos',
+          nombre,
+          f.buffer,
+          f.mimetype,
+        );
+        uploadedVideoUrls.push(url);
+        archivosRows.push(
+          this.archivosRepo.create({
+            inmuebleId: saved.id,
+            tipo: 'video',
+            url,
+            objectPath: `${saved.id}/videos/${nombre}`,
+            sortOrder: videoSort++,
+          }),
+        );
+      }
+
+      if (uploadedVideoUrls.length) {
+        if (saved.terrenoCampestre && typeof saved.terrenoCampestre === 'object') {
+          saved.terrenoCampestre = mergeVideoUrls(
+            saved.terrenoCampestre as Record<string, unknown>,
+            uploadedVideoUrls,
+          );
+        } else if (
+          saved.publicacionInmueble
+          && typeof saved.publicacionInmueble === 'object'
+        ) {
+          saved.publicacionInmueble = mergeVideoUrls(
+            saved.publicacionInmueble as Record<string, unknown>,
+            uploadedVideoUrls,
+          );
+        } else {
+          saved.publicacionInmueble = {
+            videos: uploadedVideoUrls,
+            operacion,
+          };
+        }
+      }
+
+      saved = await this.repo.save(saved);
+      if (archivosRows.length) await this.archivosRepo.save(archivosRows);
+
+      const conArchivos = await this.repo.findOne({
+        where: { id: saved.id },
+        relations: { archivos: true },
+      });
+      return toDto(conArchivos ?? saved);
+    } catch (err: unknown) {
+      const detail =
+        err instanceof Error ? err.message : JSON.stringify(err).slice(0, 300);
+      this.log.error(
+        `update con archivos falló inmuebleId=${saved.id}: ${detail}`,
         err instanceof Error ? err.stack : undefined,
       );
       if (err instanceof HttpException) throw err;

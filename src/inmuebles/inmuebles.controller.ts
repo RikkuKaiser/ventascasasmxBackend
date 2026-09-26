@@ -7,6 +7,7 @@ import {
   Logger,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   UploadedFiles,
   UseGuards,
@@ -41,6 +42,15 @@ export class InmueblesController {
     return this.inmuebles.create(dto);
   }
 
+  @UseGuards(PublisherGuard)
+  @Patch(':id')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateInmuebleDto,
+  ) {
+    return this.inmuebles.update(id, dto);
+  }
+
   /**
    * multipart/form-data: campo `data` (JSON del CreateInmuebleDto), archivos opcionales
    * `principal` (1), `galeria` (varios), `videos` (varios). En GCS: `{id}/img/...` y `{id}/videos/...`.
@@ -70,22 +80,7 @@ export class InmueblesController {
       videos?: Express.Multer.File[];
     },
   ) {
-    if (!dataJson || typeof dataJson !== 'string') {
-      throw new BadRequestException(
-        'Envía el campo "data" con un JSON del inmueble (CreateInmuebleDto).',
-      );
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(dataJson) as unknown;
-    } catch {
-      throw new BadRequestException('El campo "data" no es JSON válido.');
-    }
-    const dto = plainToInstance(CreateInmuebleDto, parsed);
-    const errs = await validate(dto);
-    if (errs.length) {
-      throw new BadRequestException(errs);
-    }
+    const dto = await this.parseCreateDto(dataJson);
     const principal = files?.principal?.[0];
     const nGal = files?.galeria?.length ?? 0;
     const nVid = files?.videos?.length ?? 0;
@@ -106,9 +101,82 @@ export class InmueblesController {
     }
   }
 
+  /**
+   * Igual que POST con-fotos, pero actualiza el inmueble existente.
+   * Si no envías archivos nuevos, se conservan la portada, la galería y los videos.
+   */
+  @UseGuards(PublisherGuard)
+  @Patch(':id/con-fotos')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'principal', maxCount: 1 },
+        { name: 'galeria', maxCount: 24 },
+        { name: 'videos', maxCount: 8 },
+      ],
+      {
+        storage: upload,
+        limits: { fileSize: 100 * 1024 * 1024 },
+      },
+    ),
+  )
+  async updateConFotos(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('data') dataJson: string,
+    @UploadedFiles()
+    files: {
+      principal?: Express.Multer.File[];
+      galeria?: Express.Multer.File[];
+      videos?: Express.Multer.File[];
+    },
+  ) {
+    const dto = await this.parseCreateDto(dataJson);
+    const principal = files?.principal?.[0];
+    const nGal = files?.galeria?.length ?? 0;
+    const nVid = files?.videos?.length ?? 0;
+    this.log.log(
+      `PATCH con-fotos id=${id} tipoVivienda=${dto.tipoVivienda} principal=${principal ? `${principal.size}b` : 'no'} galeria=${nGal} videos=${nVid}`,
+    );
+    try {
+      return await this.inmuebles.update(id, dto, {
+        principal,
+        galeria: files?.galeria,
+        videos: files?.videos,
+      });
+    } catch (e: unknown) {
+      if (e instanceof HttpException) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      this.log.error(
+        `PATCH con-fotos error no-HTTP: ${msg}`,
+        e instanceof Error ? e.stack : undefined,
+      );
+      throw e;
+    }
+  }
+
   @Public()
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.inmuebles.findOne(id);
+  }
+
+  private async parseCreateDto(dataJson: string): Promise<CreateInmuebleDto> {
+    if (!dataJson || typeof dataJson !== 'string') {
+      throw new BadRequestException(
+        'Envía el campo "data" con un JSON del inmueble (CreateInmuebleDto).',
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(dataJson) as unknown;
+    } catch {
+      throw new BadRequestException('El campo "data" no es JSON válido.');
+    }
+    const dto = plainToInstance(CreateInmuebleDto, parsed);
+    const errs = await validate(dto);
+    if (errs.length) {
+      throw new BadRequestException(errs);
+    }
+    return dto;
   }
 }
